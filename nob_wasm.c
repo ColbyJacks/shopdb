@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
         "-sALLOW_MEMORY_GROWTH=1",
         "-lraylib",
         "-lstdc++",
-        "--preload-file", "resources",
+        "--preload-file", "assets",
         "-o", "./shop.js"
     );
     if (!nob_cmd_run(&cmd)) {

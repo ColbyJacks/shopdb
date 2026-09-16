@@ -10,6 +10,6 @@
 *.pyc
 *.wasm
 *.data
-cimgui/
+*.db
 **/lib/
 **/lib_wasm/

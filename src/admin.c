@@ -2,8 +2,8 @@
 #define MIN_MAIN_W 80.0
 #define MIN_EDITOR_H 150.0
 #define MIN_SCHEMA_W 100.0
-#define CELL(r, x, y) ((r)->cells[(y)*(r)->width+(x)])
 
+/* TEXT EDITOR */
 void init_text_ed(Text_Editor *ed) {
     ed->alloc = (Arena){0};
     ed->capacity = 1024;
@@ -35,12 +35,54 @@ int text_ed_callback(ImGuiInputTextCallbackData* cb) {
     return 0;
 }
 
-// damn `gcc` wont stop complaining about 'const'
+/* SQL HELPERS */
 char* sql_copy_string(const char* s) {
     if (!s) s = "NULL";
     size_t n = strlen(s);
     char* out = malloc(n+1);
     memcpy(out,s,n+1);
+    return out;
+}
+
+char* sql_quote_string(const char* s) {
+    size_t len = 2;
+    for (const char* p=s; *p; p++) {
+        len += (*p == '\'') ? 2 : 1;
+    }
+    char* out = malloc(len + 1);
+    char* d = out;
+    *d++ = '\'';
+    for (const char* p = s; *p; p++) {
+        if (*p == '\'') {
+            *d++ = '\'';
+            *d++ = '\'';
+        } else {
+            *d++ = *p;
+        }
+    }
+    *d++ = '\'';
+    *d = '\0';
+    return out;
+}
+
+char* sql_quote_ident(const char* s) {
+    size_t len = 2;
+    for (const char* p = s; *p; p++) {
+        len += (*p == '"') ? 2 : 1;
+    }
+    char* out = malloc(len + 1);
+    char* d = out;
+    *d++ = '"';
+    for (const char* p = s; *p; p++) {
+        if (*p == '"') {
+            *d++ = '"';
+            *d++ = '"';
+        } else {
+            *d++ = *p;
+        }
+    }
+    *d++ = '"';
+    *d = '\0';
     return out;
 }
 
@@ -204,11 +246,103 @@ rollback:
     return result;
 }
 
+SQL_Result sql_load_csv(sqlite3* db, char* path) {
+    SQL_Result csv = load_csv(path);
+    if (csv.error) {
+        return csv;
+    }
+    if (csv.width <= 0) {
+        sql_result_free(&csv);
+        SQL_Result result = {0};
+        result.error = sql_copy_string("csv has no columns");
+        return result;
+    }
+    char* table_name = path;
+    SQL_Template sql = {0};
+    sql.capacity = 8;
+    char* table = sql_quote_ident(table_name);
+    SQL_APPEND(sql, "CREATE TABLE %s (\n", table);
+    for (int x = 0; x < csv.width; x++) {
+        char* column = sql_quote_ident(csv.columns[x]);
+        SQL_APPEND(
+            sql,
+            "    %s TEXT%s\n",
+            column,
+            x + 1 < csv.width ? "," : ""
+        );
+        free(column);
+    }
+    SQL_APPEND(sql, ");\n\n");
+
+    if (csv.height > 0) {
+        SQL_APPEND(sql, "INSERT INTO %s VALUES\n", table);
+        for (int y = 0; y < csv.height; y++) {
+            SQL_APPEND(sql, "    (");
+            for (int x = 0; x < csv.width; x++) {
+                char* value = sql_quote_string(CELL(&csv, x, y));
+                SQL_APPEND(
+                    sql,
+                    "%s%s",
+                    value,
+                    x + 1 < csv.width ? ", " : ""
+                );
+                free(value);
+            }
+            SQL_APPEND(
+                sql,
+                ")%s\n",
+                y + 1 < csv.height ? "," : ";"
+            );
+        }
+    }
+    free(table);
+    sql_result_free(&csv);
+    SQL_Result result = sql_run(db, sql.str);
+    free(sql.str);
+    return result; 
+}
+
+/* ADMIN UI */
 void admin_panel_init(Admin_Panel *admin, Text_Editor* ed) {
     memset(admin, 0, sizeof(Admin_Panel));
     admin->split_h = 200.0;
     admin->split_v = 150.0;
     admin->current_ed = ed;
+}
+
+
+void admin_load_csv_popup(Admin_Panel* admin) {
+    bool popup = ImGui_BeginPopupModal(
+            "Import CSV", 
+            NULL, 
+            ImGuiWindowFlags_AlwaysAutoResize
+    );
+    if (popup) {
+        ImGui_TextUnformatted("CSV path:");
+        ImGui_SetNextItemWidth(400.0f);
+        bool enter = ImGui_InputText(
+            "##csv_path",
+            admin->csv_path_buf,
+            sizeof(admin->csv_path_buf),
+            ImGuiInputTextFlags_EnterReturnsTrue
+        );
+        if (enter || ImGui_Button("Import")) {
+            sql_result_free(&admin->prev_result);
+            admin->prev_result = sql_load_csv(admin->db, admin->csv_path_buf);
+            if (!admin->prev_result.error) {
+                if (!schema_list_refresh(admin->db, &admin->schema)) {
+                    printf("[admin panel] schema list refresh failed!\n");
+                }
+                admin->csv_path_buf[0] = '\0';
+            }
+            ImGui_CloseCurrentPopup();
+        }
+        ImGui_SameLine();
+        if (ImGui_Button("Cancel")) {
+            ImGui_CloseCurrentPopup();
+        }
+        ImGui_EndPopup();
+    }
 }
 
 void admin_panel(Admin_Panel* admin) {
@@ -357,6 +491,12 @@ void admin_panel(Admin_Panel* admin) {
                 }
             }
         }
+        ImGui_SameLine();
+        if (ImGui_Button("Import CSV")) {
+            ImGui_OpenPopup("Import CSV", 0);
+        } 
+        admin_load_csv_popup(admin);
+
         ImGui_SameLine();
         ImGui_TextDisabled("%zu bytes", ed->count);
 

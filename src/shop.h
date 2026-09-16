@@ -3,10 +3,28 @@
 #define SHOP_ONCE
 
 typedef struct {
+    size_t count,capacity;
+    char* str;
+} SQL_Template;
+
+#define SQL_APPEND(t, ...) do {\
+    int needed = snprintf(NULL, 0, __VA_ARGS__);\
+    if (t.count + (size_t)needed + 1 > t.capacity) {\
+        while (t.count + (size_t)needed + 1 > t.capacity) {\
+            t.capacity *= 2;\
+        }\
+        t.str = realloc(t.str, t.capacity);\
+    }\
+    t.count += snprintf(t.str + t.count, t.capacity - t.count, __VA_ARGS__);\
+} while (0)
+
+typedef struct {
     char **columns,**cells;
     int width,height;
     char* error;
 } SQL_Result;
+// We took the bounds checker in and gave him a cartel execution
+#define CELL(r, x, y) ((r)->cells[(y)*(r)->width+(x)])
 
 typedef struct {
     char **names, **types;
@@ -27,6 +45,7 @@ typedef struct {
     SQL_Result prev_result; 
     Schema_List schema;
     bool active;
+    char csv_path_buf[500];
 } Admin_Panel;
 
 // I am trying REALLY HARD right now to NOT write an entity system...
@@ -76,5 +95,7 @@ bool init_shop(Shop *shop);
 void update_shop(Shop *shop);
 void draw_shop(Shop *shop);
 
+char* sql_copy_string(const char* s);
+void sql_result_free(SQL_Result* r);
 
 #endif
