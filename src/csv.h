@@ -262,7 +262,7 @@ char *fread_csv_line(FILE *fp, int max_line_size, int *done, int *err) {
 
     if (max_line_size > prev_max_line_size) {
         if (prev_max_line_size != -1) {
-            free( buf );
+            free(buf);
         }
         buf = malloc(max_line_size + 1);
         if (!buf) {
@@ -309,7 +309,6 @@ char *fread_csv_line(FILE *fp, int max_line_size, int *done, int *err) {
     return strdup(buf);
 }
 
-// holy grail
 SQL_Result load_csv(char* path) {
     SQL_Result result = {0};
     FILE* fp = fopen(path, "rb");
@@ -375,6 +374,10 @@ SQL_Result load_csv(char* path) {
                     : "could not read csv"
             );
             goto fail;
+        }
+        if (done && line[0] == '\0') {
+            free(line);
+            break;
         }
         char** row = parse_csv(line);
         free(line);

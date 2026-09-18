@@ -35,7 +35,7 @@ typedef struct {
     char* data;
     size_t count,capacity;
     bool dirty;
-    Arena alloc; 
+    Arena alloc;
 } Text_Editor;
 
 typedef struct {
