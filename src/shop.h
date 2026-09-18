@@ -2,12 +2,26 @@
 #ifndef SHOP_ONCE
 #define SHOP_ONCE
 
+#ifndef CSV_SQL
+    // this is kinda just here for reference, `CSV_SQL` should be defined in `shop.c` before `#include "shop.h" 
+    typedef struct {
+        char **columns,**cells;
+        int width,height;
+        char* error;
+    } SQL_Result;
+
+    // We took the bounds checker in and gave him a cartel execution
+    #define CELL(r, x, y) ((r)->cells[(y)*(r)->width+(x)])
+#endif
+
 typedef struct {
     size_t count,capacity;
     char* str;
 } SQL_Template;
 
-#define SQL_APPEND(t, ...) do {\
+#define NEW_SQL (SQL_Template){0,8,NULL}
+
+#define APPEND_SQL(t, ...) do {\
     int needed = snprintf(NULL, 0, __VA_ARGS__);\
     if (t.count + (size_t)needed + 1 > t.capacity) {\
         while (t.count + (size_t)needed + 1 > t.capacity) {\
@@ -18,17 +32,13 @@ typedef struct {
     t.count += snprintf(t.str + t.count, t.capacity - t.count, __VA_ARGS__);\
 } while (0)
 
-typedef struct {
-    char **columns,**cells;
-    int width,height;
-    char* error;
-} SQL_Result;
-// We took the bounds checker in and gave him a cartel execution
-#define CELL(r, x, y) ((r)->cells[(y)*(r)->width+(x)])
+// not technically individual free because dynamic arrays are the PRECURSOR to arenas
+#define NUKE_SQL(t) free(t.str)
 
 typedef struct {
     char **names, **types;
     int count, capacity;
+    Arena alloc;
 } Schema_List;
 
 typedef struct {
@@ -46,6 +56,9 @@ typedef struct {
     Schema_List schema;
     bool active;
     char csv_path_buf[500];
+
+    Arena alloc;
+    Arena temp;
 } Admin_Panel;
 
 // I am trying REALLY HARD right now to NOT write an entity system...
@@ -94,8 +107,5 @@ void screen_swap(Shop* shop, Screen screen);
 bool init_shop(Shop *shop);
 void update_shop(Shop *shop);
 void draw_shop(Shop *shop);
-
-char* sql_copy_string(const char* s);
-void sql_result_free(SQL_Result* r);
 
 #endif

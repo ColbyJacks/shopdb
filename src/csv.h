@@ -43,6 +43,16 @@
     ch = *read_ptr++;\
 } while(0)
 
+// NOTE: if `CSV_SQL` is defined then `Arena` is expected to also exist!!
+#ifdef CSV_SQL
+    typedef struct {
+        char **columns,**cells;
+        int width,height;
+        char* error;
+    } SQL_Result;
+    #define CELL(r, x, y) ((r)->cells[(y)*(r)->width+(x)])
+#endif
+
 char **parse_csv(const char *line);
 void free_csv_line(char **parsed);
 char **split_on_unescaped_newlines(const char *txt);
@@ -309,19 +319,21 @@ char *fread_csv_line(FILE *fp, int max_line_size, int *done, int *err) {
     return strdup(buf);
 }
 
-SQL_Result load_csv(char* path) {
+#ifdef CSV_SQL 
+
+SQL_Result sql_load_csv(Arena *alloc, char* path) {
     SQL_Result result = {0};
     FILE* fp = fopen(path, "rb");
     if (!fp) {
-        result.error = sql_copy_string("could not open csv");
+        result.error = arena_strdup(alloc, "could not open csv");
         return result;
     }
-
     int done = 0;
     int err = 0;
     char* line = fread_csv_line(fp, 1024 * 1024, &done, &err);
     if (!line) {
-        result.error = sql_copy_string(
+        result.error = arena_strdup(
+            alloc,
             err == CSV_ERR_LONGLINE
                 ? "csv line too long"
                 : "could not read csv"
@@ -333,42 +345,35 @@ SQL_Result load_csv(char* path) {
     char** header = parse_csv(line);
     free(line);
     if (!header) {
-        result.error = sql_copy_string("could not parse csv header");
+        result.error = arena_strdup(alloc, "could not parse csv header");
         fclose(fp);
         return result;
     }
-
     // count columns
     while (header[result.width]) {
         result.width++;
     }
     if (result.width == 0) {
         free_csv_line(header);
-        result.error = sql_copy_string("csv has no columns");
+        result.error = arena_strdup(alloc, "csv has no columns");
         fclose(fp);
         return result;
     }
-
-    // Steal the strings from parse_csv instead of copying them.
-    result.columns = malloc(
-        sizeof(char*) * (size_t)result.width
+    result.columns = arena_alloc(
+        alloc, 
+        sizeof(*result.columns) * (size_t)result.width
     );
-    if (!result.columns) {
-        free_csv_line(header);
-        result.error = sql_copy_string("buy more RAM, lol!");
-        fclose(fp);
-        return result;
+    for (int x=0; x < result.width; x++) {
+        result.columns[x] = arena_strdup(alloc, header[x]);
     }
-    for (int x = 0; x < result.width; x++) {
-        result.columns[x] = header[x];
-    }
-    // Don't free_csv_line(header), because we stole its strings.
-    free(header);
+    free_csv_line(header);
+
     int row_cap = 0;
     while (!done) {
         line = fread_csv_line(fp, 1024 * 1024, &done, &err);
         if (!line) {
-            result.error = sql_copy_string(
+            result.error = arena_strdup(
+                alloc,
                 err == CSV_ERR_LONGLINE
                     ? "csv line too long"
                     : "could not read csv"
@@ -382,7 +387,7 @@ SQL_Result load_csv(char* path) {
         char** row = parse_csv(line);
         free(line);
         if (!row) {
-            result.error = sql_copy_string("could not parse csv row");
+            result.error = arena_strdup(alloc, "could not parse csv row");
             goto fail;
         }
         // Make sure this row has exactly result.width fields 
@@ -392,33 +397,26 @@ SQL_Result load_csv(char* path) {
         }
         if (row_width != result.width) {
             free_csv_line(row);
-            result.error = sql_copy_string("csv row has wrong number of columns");
+            result.error = arena_strdup(alloc, "csv row has wrong number of columns");
             goto fail;
         }
 
         if (result.height >= row_cap) {
+            int old_cap = row_cap;
             int new_cap = row_cap ? row_cap * 2 : 64;
-            char** new_cells = realloc(
+            char** new_cells = arena_realloc(
+                alloc,
                 result.cells,
-                sizeof(char*) *
-                (size_t)new_cap *
-                (size_t)result.width
+                sizeof(*result.cells) * (size_t)(old_cap * result.width),
+                sizeof(*result.cells) * (size_t)(new_cap * result.width)
             );
-            if (!new_cells) {
-                free_csv_line(row);
-                result.error = sql_copy_string("buy more RAM, lol!");
-                goto fail;
-            }
             result.cells = new_cells;
             row_cap = new_cap;
         }
-
-        // Again: steal strings instead of strdup'ing everything.
         for (int x = 0; x < result.width; x++) {
-            CELL(&result, x, result.height) = row[x];
+            CELL(&result, x, result.height) = arena_strdup(alloc, row[x]);
         }
-
-        free(row);
+        free_csv_line(row);
         result.height++;
     }
     fclose(fp);
@@ -426,13 +424,9 @@ SQL_Result load_csv(char* path) {
 
 fail:
     fclose(fp);
-    // Can't sql_result_free() directly because that would free error too.
-    char* error = result.error;
-    result.error = NULL;
-    sql_result_free(&result);
-    result.error = error;
     return result;
 }
 
+#endif
 #endif
 #endif

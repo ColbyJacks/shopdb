@@ -35,21 +35,21 @@ int text_ed_callback(ImGuiInputTextCallbackData* cb) {
     return 0;
 }
 
-/* SQL HELPERS */
-char* sql_copy_string(const char* s) {
+/* HELPERS */
+char* admin_copy_string(Admin_Panel* admin, const char* s) {
     if (!s) s = "NULL";
     size_t n = strlen(s);
-    char* out = malloc(n+1);
+    char* out = arena_alloc(&admin->alloc, n+1);
     memcpy(out,s,n+1);
     return out;
 }
 
-char* sql_quote_string(const char* s) {
+char* arena_quote_string(Arena* a, const char* s) {
     size_t len = 2;
     for (const char* p=s; *p; p++) {
         len += (*p == '\'') ? 2 : 1;
     }
-    char* out = malloc(len + 1);
+    char* out = arena_alloc(a, len + 1);
     char* d = out;
     *d++ = '\'';
     for (const char* p = s; *p; p++) {
@@ -65,12 +65,12 @@ char* sql_quote_string(const char* s) {
     return out;
 }
 
-char* sql_quote_ident(const char* s) {
+char* arena_quote_ident(Arena* a, const char* s) {
     size_t len = 2;
     for (const char* p = s; *p; p++) {
         len += (*p == '"') ? 2 : 1;
     }
-    char* out = malloc(len + 1);
+    char* out = arena_alloc(a, len + 1);
     char* d = out;
     *d++ = '"';
     for (const char* p = s; *p; p++) {
@@ -86,33 +86,36 @@ char* sql_quote_ident(const char* s) {
     return out;
 }
 
-void sql_result_free(SQL_Result* r) {
-    if (!r) return;
-    for (int x=0; x<r->width; x++) {
-        free(r->columns[x]);
-    }
-    for (int i=0; i<r->width*r->height; i++) {
-        free(r->cells[i]);
-    }
-    free(r->columns);
-    free(r->cells);
-    free(r->error);
-    *r = (SQL_Result){0};
-}
+/*  PUBLICLY CRUCIFIED
 
-void schema_list_free(Schema_List* s) {
-    if (!s) return;
-    for (int i=0; i<s->count; i++) {
-        free(s->names[i]);
-        free(s->types[i]);
-    }
-    free(s->names);
-    free(s->types);
-    *s = (Schema_List){0};
-}
+        void sql_result_free(SQL_Result* r) {
+            if (!r) return;
+            for (int x=0; x<r->width; x++) {
+                free(r->columns[x]);
+            }
+            for (int i=0; i<r->width*r->height; i++) {
+                free(r->cells[i]);
+            }
+            free(r->columns);
+            free(r->cells);
+            free(r->error);
+            *r = (SQL_Result){0};
+        }
 
-bool schema_list_refresh(sqlite3* db, Schema_List* s) {
-    schema_list_free(s);
+        void schema_list_free(Schema_List* s) {
+            if (!s) return;
+            for (int i=0; i<schema.count; i++) {
+                free(schema.names[i]);
+                free(schema.types[i]);
+            }
+            free(schema.names);
+            free(schema.types);
+            *s = (Schema_List){0};
+        }
+
+*/
+
+bool schema_list_refresh(Admin_Panel* admin) {
     // NOTE: you need spaces AT THE END when inlining multiline SQL string like this
     const char* sql = 
         "SELECT name, type "
@@ -121,34 +124,56 @@ bool schema_list_refresh(sqlite3* db, Schema_List* s) {
         "AND name NOT LIKE 'sqlite_%' "
         "ORDER BY type, name;";
 
+    Schema_List* schema = &admin->schema;
+    Arena* alloc = &admin->schema.alloc;
+    arena_reset(alloc);
+    schema->names = NULL;
+    schema->types = NULL;
+    schema->count = 0;
+    schema->capacity = 0;
+
     sqlite3_stmt* stmt = NULL;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(admin->db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         return false;
     }
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        if (s->count >= s->capacity) {
-            int new_cap = s->capacity ? s->capacity * 2 : 16;
-            char** new_names = realloc(s->names, sizeof(char*) * (size_t)new_cap);
-            char** new_types = realloc(s->types, sizeof(char*) * (size_t)new_cap);
-            s->names = new_names;
-            s->types = new_types;
-            s->capacity = new_cap;
+        if (schema->count >= schema->capacity) {
+            int old_cap = schema->capacity;
+            int new_cap = schema->capacity ? schema->capacity * 2 : 16;
+            schema->names = arena_realloc(
+                alloc,
+                schema->names, 
+                sizeof(char*) * (size_t)old_cap,
+                sizeof(char*) * (size_t)new_cap
+            );
+            schema->types = arena_realloc(
+                alloc,
+                schema->types, 
+                sizeof(char*) * (size_t)old_cap,
+                sizeof(char*) * (size_t)new_cap
+            );
+            schema->capacity = new_cap;
         }
 
         char* name = (char*)sqlite3_column_text(stmt, 0);
         char* type = (char*)sqlite3_column_text(stmt, 1);
-        s->names[s->count] = sql_copy_string(name);
-        s->types[s->count] = sql_copy_string(type);
-        s->count++;
+        schema->names[schema->count] = arena_strdup(alloc, name);
+        schema->types[schema->count] = arena_strdup(alloc, type);
+        schema->count++;
     }
     sqlite3_finalize(stmt);
     return true;
 }
 
-SQL_Result sql_run(sqlite3* db, char* sql) {
+SQL_Result sql_run(Admin_Panel* admin, char* sql) {
+    arena_reset(&admin->alloc);
+    Arena_Mark mark = arena_snapshot(&admin->alloc);
+
+    sqlite3* db = admin->db;
+
     SQL_Result result = {0};
     if (!db) {
-        result.error = sql_copy_string("where tf is the db??");
+        result.error = admin_copy_string(admin, "where tf is the db??");
         return result;
     }
 
@@ -157,7 +182,7 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
     int rc = sqlite3_exec(db, "SAVEPOINT admin_run;", NULL,NULL, &error_msg);
     // paranoia
     if (rc != SQLITE_OK) {
-        result.error = sql_copy_string(error_msg ? error_msg : sqlite3_errmsg(db));
+        result.error = admin_copy_string(admin, error_msg ? error_msg : sqlite3_errmsg(db));
         sqlite3_free(error_msg);
         return result;
     }
@@ -168,7 +193,7 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
         const char* next = NULL;
         rc = sqlite3_prepare_v2(db, cursor, -1, &stmt, &next);
         if (rc != SQLITE_OK) {
-            result.error = sql_copy_string(sqlite3_errmsg(db));
+            result.error = admin_copy_string(admin, sqlite3_errmsg(db));
             goto rollback; // BUT DJISTRKA TOLD ME THIS WAS BAD!!!
         }
         if (!stmt) {
@@ -180,12 +205,15 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
 
         // if this statement gives a table, replace the previous result
         if (width > 0) {
-            sql_result_free(&result);
+            arena_rewind(&admin->alloc, mark);
+            result = (SQL_Result){0};
             result.width = width;
-            result.columns = calloc((size_t) width, sizeof(char*));
-
+            result.columns = arena_alloc(&admin->alloc, sizeof(*result.columns) * width);
             for (int x=0; x<width; x++) {
-                result.columns[x] = sql_copy_string(sqlite3_column_name(stmt, x));
+                result.columns[x] = admin_copy_string(
+                    admin, 
+                    sqlite3_column_name(stmt, x)
+                );
             }
         }
         int row_cap = 0;
@@ -193,12 +221,18 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
             // only collect rows for statements that return columns
             if (width > 0) {
                 if (result.height >= row_cap) {
-                    int new_cap = row_cap ? row_cap*2 : 64;
-                    char** cells = realloc(result.cells, sizeof(char*) * (size_t)(new_cap * width));
+                    int old_cap = row_cap;
+                    int new_cap = row_cap ? row_cap * 2 : 64;
+                    char** cells = arena_realloc(
+                        &admin->alloc,
+                        result.cells, 
+                        sizeof(*result.cells) * (size_t)(old_cap * width),
+                        sizeof(*result.cells) * (size_t)(new_cap * width)
+                    );
 
                     if (!cells) {
                         sqlite3_finalize(stmt);
-                        result.error = sql_copy_string("buy more RAM, lol!");
+                        // buy more RAM, LOL
                         goto rollback;
                     }
                     result.cells = cells;
@@ -207,7 +241,7 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
 
                 for (int x=0; x<width; x++) {
                     char* text = (char*)sqlite3_column_text(stmt, x);
-                    CELL(&result, x, result.height) = sql_copy_string(text);
+                    CELL(&result, x, result.height) = admin_copy_string(admin, text);
                 }
 
                 result.height++;
@@ -215,9 +249,8 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
         }
 
         if (rc != SQLITE_DONE) {
-            char* msg = sql_copy_string(sqlite3_errmsg(db));
+            char* msg = admin_copy_string(admin, sqlite3_errmsg(db));
             sqlite3_finalize(stmt);
-            sql_result_free(&result);
             result.error = msg;
             goto rollback;
         }
@@ -228,8 +261,10 @@ SQL_Result sql_run(sqlite3* db, char* sql) {
     rc = sqlite3_exec(db, "RELEASE admin_run;", NULL,NULL, &error_msg);
     // paranoia
     if (rc != SQLITE_OK) {
-        sql_result_free(&result);
-        result.error = sql_copy_string(error_msg ? error_msg : sqlite3_errmsg(db));
+        result.error = admin_copy_string(
+            admin, 
+            error_msg ? error_msg : sqlite3_errmsg(db)
+        );
         sqlite3_free(error_msg);
     }
     return result;
@@ -239,66 +274,65 @@ rollback:
     rc = sqlite3_exec(db, "RELEASE admin_run;", NULL,NULL,NULL);
     // last paranoia
     if (rc != SQLITE_OK) {
-        sql_result_free(&result);
-        result.error = sql_copy_string(error_msg ? error_msg : sqlite3_errmsg(db));
+        result.error = admin_copy_string(
+            admin, 
+            error_msg ? error_msg : sqlite3_errmsg(db)
+        );
         sqlite3_free(error_msg);
     }
     return result;
 }
 
-SQL_Result sql_load_csv(sqlite3* db, char* path) {
-    SQL_Result csv = load_csv(path);
+SQL_Result admin_load_csv(Admin_Panel* admin, char* path) {
+    Arena_Mark mark = arena_snapshot(&admin->temp);
+    SQL_Result csv = sql_load_csv(&admin->temp, path);
     if (csv.error) {
-        return csv;
-    }
-    if (csv.width <= 0) {
-        sql_result_free(&csv);
+        arena_reset(&admin->alloc);
         SQL_Result result = {0};
-        result.error = sql_copy_string("csv has no columns");
+        result.error = admin_copy_string(admin, csv.error);
+        arena_rewind(&admin->temp, mark);
         return result;
     }
+
     char* table_name = path;
-    SQL_Template sql = {0};
-    sql.capacity = 8;
-    char* table = sql_quote_ident(table_name);
-    SQL_APPEND(sql, "CREATE TABLE %s (\n", table);
+    SQL_Template sql = NEW_SQL;
+
+    char* table = arena_quote_ident(&admin->temp, table_name);
+    APPEND_SQL(sql, "CREATE TABLE %s (\n", table);
     for (int x = 0; x < csv.width; x++) {
-        char* column = sql_quote_ident(csv.columns[x]);
-        SQL_APPEND(
+        char* column = arena_quote_ident(&admin->temp, csv.columns[x]);
+        APPEND_SQL(
             sql,
             "    %s TEXT%s\n",
             column,
             x + 1 < csv.width ? "," : ""
         );
-        free(column);
     }
-    SQL_APPEND(sql, ");\n\n");
+    APPEND_SQL(sql, ");\n\n");
 
     if (csv.height > 0) {
-        SQL_APPEND(sql, "INSERT INTO %s VALUES\n", table);
+        APPEND_SQL(sql, "INSERT INTO %s VALUES\n", table);
         for (int y = 0; y < csv.height; y++) {
-            SQL_APPEND(sql, "    (");
+            APPEND_SQL(sql, "    (");
             for (int x = 0; x < csv.width; x++) {
-                char* value = sql_quote_string(CELL(&csv, x, y));
-                SQL_APPEND(
+                char* value = arena_quote_string(&admin->temp, CELL(&csv, x, y));
+                APPEND_SQL(
                     sql,
                     "%s%s",
                     value,
                     x + 1 < csv.width ? ", " : ""
                 );
-                free(value);
             }
-            SQL_APPEND(
+            APPEND_SQL(
                 sql,
                 ")%s\n",
                 y + 1 < csv.height ? "," : ";"
             );
         }
     }
-    free(table);
-    sql_result_free(&csv);
-    SQL_Result result = sql_run(db, sql.str);
-    free(sql.str);
+    arena_rewind(&admin->temp, mark);
+    SQL_Result result = sql_run(admin, sql.str);
+    NUKE_SQL(sql);
     return result; 
 }
 
@@ -309,7 +343,6 @@ void admin_panel_init(Admin_Panel *admin, Text_Editor* ed) {
     admin->split_v = 150.0;
     admin->current_ed = ed;
 }
-
 
 void admin_load_csv_popup(Admin_Panel* admin) {
     bool popup = ImGui_BeginPopupModal(
@@ -327,10 +360,9 @@ void admin_load_csv_popup(Admin_Panel* admin) {
             ImGuiInputTextFlags_EnterReturnsTrue
         );
         if (enter || ImGui_Button("Import")) {
-            sql_result_free(&admin->prev_result);
-            admin->prev_result = sql_load_csv(admin->db, admin->csv_path_buf);
+            admin->prev_result = admin_load_csv(admin, admin->csv_path_buf);
             if (!admin->prev_result.error) {
-                if (!schema_list_refresh(admin->db, &admin->schema)) {
+                if (!schema_list_refresh(admin)) {
                     printf("[admin panel] schema list refresh failed!\n");
                 }
                 admin->csv_path_buf[0] = '\0';
@@ -483,10 +515,9 @@ void admin_panel(Admin_Panel* admin) {
 
         /* TOOL BAR */
         if (ImGui_Button(ICON_FA_PLAY" Run")) {
-            sql_result_free(&admin->prev_result);
-            admin->prev_result = sql_run(admin->db, ed->data);
+            admin->prev_result = sql_run(admin, ed->data);
             if (!admin->prev_result.error) {
-                if (!schema_list_refresh(admin->db, &admin->schema)) {
+                if (!schema_list_refresh(admin)) {
                     printf("[admin panel] schema list refresh failed!");
                 }
             }

@@ -14,14 +14,13 @@
 #include "string.h"
 #include "float.h"
 
-
 #define ARENA_IMPLEMENTATION
 #include "arena.h"
-
-#include "shop.h"
-
+#define CSV_SQL 
 #define CSV_IMPLEMENTATION
 #include "csv.h"
+
+#include "shop.h"
 
 #include "assets.c"
 #include "shaders.c"
@@ -75,7 +74,6 @@ int main(int argc, char* argv[]) {
 		EndDrawing();
 	}
 
-    sql_result_free(&shop.admin.prev_result);
     sqlite3_close(shop.admin.db);
     arena_free(&shop.admin.current_ed->alloc);
     rlImGuiShutdown();
