@@ -283,6 +283,9 @@ rollback:
     return result;
 }
 
+// NOTE: this is kinda insane, generating SQL program to load a csv
+// it's pretty cool though, I should probably use the SQLite API like a normal person
+// but I probably wont for this project because our `.csv`s will be like 1MB tops
 SQL_Result admin_load_csv(Admin_Panel* admin, char* path) {
     Arena_Mark mark = arena_snapshot(&admin->temp);
     SQL_Result csv = sql_load_csv(&admin->temp, path);
@@ -295,6 +298,7 @@ SQL_Result admin_load_csv(Admin_Panel* admin, char* path) {
     }
 
     char* table_name = path;
+    strip_file_name(table_name);
     SQL_Template sql = NEW_SQL;
 
     char* table = arena_quote_ident(&admin->temp, table_name);
@@ -337,7 +341,7 @@ SQL_Result admin_load_csv(Admin_Panel* admin, char* path) {
 }
 
 /* ADMIN UI */
-void admin_panel_init(Admin_Panel *admin, Text_Editor* ed) {
+void init_admin_panel(Admin_Panel *admin, Text_Editor* ed) {
     memset(admin, 0, sizeof(Admin_Panel));
     admin->split_h = 200.0;
     admin->split_v = 150.0;

@@ -86,7 +86,7 @@ void arena_free(Arena *a);
 void arena_trim(Arena *a);
 
 #ifndef ARENA_DA_INIT_CAP
-#define ARENA_DA_INIT_CAP 256
+#define ARENA_DA_INIT_CAP 128
 #endif // ARENA_DA_INIT_CAP
 
 #ifdef __cplusplus

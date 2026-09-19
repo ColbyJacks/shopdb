@@ -3,7 +3,7 @@
 #define SHOP_ONCE
 
 #ifndef CSV_SQL
-    // this is kinda just here for reference, `CSV_SQL` should be defined in `shop.c` before `#include "shop.h" 
+    // this is kinda just here for reference, `CSV_SQL` should be defined in `shop.c` before `#include "shop.h"` 
     typedef struct {
         char **columns,**cells;
         int width,height;
@@ -61,19 +61,6 @@ typedef struct {
     Arena temp;
 } Admin_Panel;
 
-// I am trying REALLY HARD right now to NOT write an entity system...
-typedef struct {
-    int id;
-    char name[128];
-    char description[512];
-    float price;
-    Texture2D texture;
-    bool has_texture;
-    Model model;
-    Vector3 size;
-    float scale;
-} Item;
-
 typedef enum {
     LOAD_SCREEN,
     HOME_SCREEN,
@@ -83,16 +70,57 @@ typedef enum {
     // IDK??
 } Screen;
 
+typedef struct {
+    Texture2D texture;
+    Screen transition;
+    const char* sql;
+} Home_Button;
+
+typedef struct {
+    int id;
+    char name[100];
+    char description[500];
+    float price;
+    int stock;
+} Item;
+
+typedef struct {
+    Item* items;
+    int count, capacity;
+    Arena alloc;
+} Item_List;
+
+typedef struct {
+    bool is_model;
+    float scale;
+    union {
+        Texture2D texture;
+        Model model;
+    };
+} Item_Resource;
+
+typedef Ht(int, Item_Resource) Item_Resource_Table;
+
 typedef struct Shop {
     Admin_Panel admin;
-    Item* items;
-    int item_count, item_cap;
+    Item_Resource_Table item_resources;
+
+    // HOME
+    Home_Button* home_buttons;
+    int home_button_count;
+    Item_List featured;
+    float top_row_scroll, top_row_scroll_target;
+    float bottom_row_scroll, bottom_row_scroll_target;
+
+    // DISPLAY
+    Item_List display_items;
     float scroll, scroll_target;
+
+    // CORE
     Camera3D camera;
     RenderTexture2D render_target;
     Shader shader;
     int time_loc; // cache this for perf
-
     Screen screen;
     bool transitioning;
     float transition_alpha;
@@ -100,9 +128,15 @@ typedef struct Shop {
     Screen transition_target;
 } Shop;
 
+void strip_file_name(char *path);
+
 void shop_render_pass(Shop* shop);
 void ui_render_pass(Shop* shop);
 void screen_swap(Shop* shop, Screen screen);
+Vector2 mouse_pos_in_shop(Shop* shop);
+void update_carousel(float* scroll, float* target, int count, float spacing);
+Item_List get_items_by_name(Shop* shop, const char** names, int name_count);
+void reset_item_list(Item_List* list);
 
 bool init_shop(Shop *shop);
 void update_shop(Shop *shop);

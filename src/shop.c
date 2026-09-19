@@ -16,6 +16,8 @@
 
 #define ARENA_IMPLEMENTATION
 #include "arena.h"
+#define HT_IMPLEMENTATION
+#include "ht.h"
 #define CSV_SQL 
 #define CSV_IMPLEMENTATION
 #include "csv.h"
@@ -24,7 +26,8 @@
 
 #include "assets.c"
 #include "shaders.c"
-#include "item_display.c"
+#include "home.c"
+#include "display.c"
 #include "admin.c"
 #include "web_clipboard.c"
 
@@ -80,6 +83,16 @@ int main(int argc, char* argv[]) {
 	CloseWindow();
 }
 
+void strip_file_name(char *path) {
+    char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    memmove(path, name, strlen(name) + 1);
+    char *dot = strrchr(path, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+}
+
 void shop_render_pass(Shop* shop) {
     int time_loc = shop->time_loc;
     float time = (float)GetTime();
@@ -132,12 +145,86 @@ void screen_swap(Shop* shop, Screen target) {
     shop->transition_alpha = 0.0f;
 }
 
+Vector2 mouse_pos_in_shop(Shop* shop) {
+    Vector2 mouse = GetMousePosition();
+    float window_w = (float)GetScreenWidth();
+    float window_h = (float)GetScreenHeight();
+    float target_w = (float)shop->render_target.texture.width;
+    float target_h = (float)shop->render_target.texture.height;
+    float scale = fminf(window_w/target_w, window_h/target_h);
+    float draw_w = target_w * scale;
+    float draw_h = target_h * scale;
+    float offset_x = (window_w - draw_w) * 0.5;
+    float offset_y = (window_h - draw_h) * 0.5;
+    return (Vector2) {
+        (mouse.x - offset_x) / scale,
+        (mouse.y - offset_y) / scale
+    };
+}
+
+void update_carousel(float* scroll, float* target, int count, float spacing) {
+    float wheel = GetMouseWheelMove();
+    *target -= wheel * spacing;
+    if (IsKeyPressed(KEY_RIGHT)) {
+        *target += spacing;
+    }
+    if (IsKeyPressed(KEY_LEFT)) {
+        *target -= spacing;
+    }
+    float max_scroll = fmaxf(0.0, (count-1) * spacing);
+    *target = Clamp(*target, 0.0, max_scroll);
+    *scroll = Lerp(*scroll, *target, 1.0 - powf(0.001, GetFrameTime()));
+}
+
+Item_List get_items_by_name(Shop* shop, const char** names, int name_count) {
+    Item_List list = {0};
+    SQL_Result r = sql_run(
+        &shop->admin,
+        "SELECT id, name, description, price, stock "
+        "FROM items;"
+    );
+    if (r.error) {
+        printf("%s\n", r.error);
+        return list;
+    }
+
+    for (int y=0; y<r.height; y++) {
+        if (names && name_count > 0) {
+            bool wanted = false;
+            for (int n=0; n<name_count; n++) {
+                if (strcmp(names[n], CELL(&r, 1, y)) == 0) {
+                    wanted = true;
+                    break;
+                }
+            }
+            if (!wanted) {
+                continue;
+            }
+        }
+        Item item = {0};
+        item.id = atoi(CELL(&r, 0, y));
+        snprintf(item.name, sizeof(item.name), "%s", CELL(&r, 1, y));
+        snprintf(item.description, sizeof(item.description), "%s", CELL(&r, 2, y));
+        item.price = strtof(CELL(&r, 3, y), NULL);
+        item.stock = atoi(CELL(&r, 4, y));
+        arena_da_append(&list.alloc, &list, item);
+    }
+    return list;
+}
+
+void reset_item_list(Item_List* list) {
+    arena_reset(&list->alloc);
+    list->items = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
 bool init_shop(Shop *shop) {
     // Admin UI Setup
     Admin_Panel* admin = &shop->admin;
     Text_Editor* ed = (Text_Editor*)malloc(sizeof(Text_Editor));
     init_text_ed(ed);
-    admin_panel_init(admin, ed);
+    init_admin_panel(admin, ed);
 
     // Database setup
     int rc = sqlite3_open(":memory:", &admin->db); // NO PERSISTANT DB FOR NOW!!
@@ -145,6 +232,14 @@ bool init_shop(Shop *shop) {
         printf("sqlite open failed: `%s`\n", sqlite3_errmsg(admin->db));
         return false;
     }
+    // load `csv`s
+    char path[] = "assets/csv/items.csv"; 
+    SQL_Result csv = admin_load_csv(admin, path);
+    if (csv.error) {
+        printf("admin_load_csv failed: `%s`\n", csv.error);
+        return false;
+    }
+    schema_list_refresh(admin);
 
     // Renderer setup
     int render_width = 1000;
@@ -156,10 +251,43 @@ bool init_shop(Shop *shop) {
     Vector2 resolution = {(float)target.texture.width, (float)target.texture.height};
     SetShaderValue(shop->shader, resolution_loc, &resolution, SHADER_UNIFORM_VEC2);
     shop->render_target = target;
+    shop->camera.position = (Vector3){ 0.0f, HOME_FEATURED_Y, 7.0f };
+    shop->camera.target   = (Vector3){ 0.0f, HOME_FEATURED_Y, 0.0f };
+    shop->camera.up       = (Vector3){ 0.0f, 1.0f, 0.0f };
+    shop->camera.fovy     = 45.0f;
+    shop->camera.projection = CAMERA_PERSPECTIVE;
 
     // actual Shop setup
-    init_shop_items(shop);
     shop->screen = LOAD_SCREEN;
+    // lower home menu buttons
+    add_home_button(shop, (Home_Button) {
+        .texture = CHAIRS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .sql = NULL
+    });
+    add_home_button(shop, (Home_Button) {
+        .texture = OTHER_FURNISHINGS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .sql = NULL
+    });
+    add_home_button(shop, (Home_Button) {
+        .texture = LARGER_ITEMS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .sql = NULL
+    });
+    // featured items
+    const char* featured[] = {
+        "wooden_chair",
+        "caveman_chair",
+        "the_batmobile",
+        "lawn_chair",
+    };
+    shop->featured = get_items_by_name(
+        shop,
+        featured,
+        sizeof(featured) / sizeof(featured[0])
+    );
+
     return true;
 }
 
@@ -188,10 +316,11 @@ void update_shop(Shop *shop) {
         break;
 
     case HOME_SCREEN:
+        update_home(shop);
         break;
 
     case DISPLAY_SCREEN:
-        update_item_display(shop);
+        update_display(shop);
         break;
     }
 }
@@ -209,12 +338,12 @@ void draw_shop(Shop *shop) {
         scale *= 0.8;
         float draw_w = LOGO.width * scale;
         float draw_h = LOGO.height * scale;
-        Rectangle src = { 0,0, (float)LOGO.width, (float)LOGO.height };
+        Rectangle source = { 0,0, (float)LOGO.width, (float)LOGO.height };
         Rectangle dest = { 
             (screen_w - draw_w)/2, (logo_area_h - draw_h)/2, 
             draw_w, draw_h 
         };
-        DrawTexturePro(LOGO, src, dest, (Vector2){0,0}, 0.0, WHITE);
+        DrawTexturePro(LOGO, source, dest, (Vector2){0,0}, 0.0, WHITE);
 
         // goofy loading bar
         float bar_w = 800.0; 
@@ -238,16 +367,18 @@ void draw_shop(Shop *shop) {
             1.0, 5, SHOP_GREEN
         );
         if (elapsed > 5.0) {
-            screen_swap(shop, DISPLAY_SCREEN);
+            screen_swap(shop, HOME_SCREEN);
         }
     }break;
 
     case HOME_SCREEN:
+        ClearBackground(SHOP_BG);
+        draw_home(shop);
         break;
 
     case DISPLAY_SCREEN:
         ClearBackground(SHOP_BG);
-        draw_item_display(shop);
+        draw_display(shop);
         break;
     }
 

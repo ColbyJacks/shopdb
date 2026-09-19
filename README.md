@@ -22,16 +22,16 @@ In general, it's annoying to test this way, so I prefer native build. The end re
 If I had to describe some kind of "tech stack" it would be
 ```
 ImGui (certain components of UI)
-------------------------------------
-Raylib (platform abstraction)
-------------------------------------
+----------------------------------------
+Raylib (literally the greatest API)
+----------------------------------------
 OpenGL/GLSL (epic rendering)
-------------------------------------
+----------------------------------------
 SQLite (database)
-------------------------------------
+----------------------------------------
 C/C++ (because Jai isn't out yet!!)
-------------------------------------
-WASM (the future of web development)
+----------------------------------------
+WASM (the only hope for web development)
 ```
 Everything is vendored and built into the binary. This makes dependency hell and your 3GB `node_modules` folder impossible.
 
