@@ -33,16 +33,20 @@ Rectangle home_button_rect(Shop* shop, int index) {
 
 void update_home(Shop* shop) {
     Vector2 mouse = mouse_pos_in_shop(shop);
+
+    bool top_active = mouse.y < 400;
     update_carousel(
         &shop->top_row_scroll, &shop->top_row_scroll_target,
-        shop->featured.count, HOME_FEATURED_SPACING
+        shop->featured.count, HOME_FEATURED_SPACING,
+        top_active
     );
     update_carousel(
         &shop->bottom_row_scroll, &shop->bottom_row_scroll_target,
-        shop->home_button_count, HOME_BUTTON_SPACING 
+        shop->home_button_count, HOME_BUTTON_SPACING,
+        !top_active
     );
 
-    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (!IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
         return;
     }
     for (int i=0; i<shop->home_button_count; i++) {
@@ -55,8 +59,12 @@ void update_home(Shop* shop) {
             shop->bottom_row_scroll_target = button_scroll;
             return;
         }
+        // Retained mode GUI be like:
         Home_Button button = shop->home_buttons[i];
-        // TODO: transition/event
+        if (button.callback) {
+            button.callback(shop);
+        }
+        screen_swap(shop, button.transition);
     }
 }
 
@@ -69,12 +77,12 @@ void draw_home_buttons(Shop* shop) {
             button.texture.width, button.texture.height
         };
         Rectangle dest = home_button_rect(shop, i);
-        bool hovered = CheckCollisionPointRec(mouse, dest);
+        bool hovered = CheckCollisionPointRec(mouse, dest) && !shop->paused;
         bool pressed = hovered && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
 
         Color shade = (Color){200, 200, 200, 255};
 
-        if (pressed) {
+        if (pressed && !shop->paused) {
             float scale = 0.90f;
             float old_w = dest.width;
             float old_h = dest.height;
@@ -160,6 +168,50 @@ void draw_featured_items(Shop* shop) {
 }
 
 void draw_home(Shop* shop) {
+    // top row
     draw_featured_items(shop);
+    // bottom row
     draw_home_buttons(shop);
+}
+
+void chairs_display_callback(Shop* shop) {
+    shop->display_items = query_items(shop,
+        "SELECT " ITEM_COLUMNS " FROM items "
+        "WHERE category = 'chairs';"
+    );
+}
+void furniture_display_callback(Shop* shop) {
+    shop->display_items = query_items(shop,
+        "SELECT " ITEM_COLUMNS " FROM items "
+        "WHERE category = 'furniture';"
+    );
+}
+void large_display_callback(Shop* shop) {
+    shop->display_items = query_items(shop,
+        "SELECT " ITEM_COLUMNS " FROM items "
+        "WHERE category = 'large';"
+    );
+}
+
+void init_home_menu_buttons(Shop* shop) {
+    add_home_button(shop, (Home_Button) {
+        .texture = CHAIRS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .callback = chairs_display_callback
+    });
+    add_home_button(shop, (Home_Button) {
+        .texture = OTHER_FURNISHINGS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .callback = furniture_display_callback
+    });
+    add_home_button(shop, (Home_Button) {
+        .texture = LARGER_ITEMS_HOME_ICON,
+        .transition = DISPLAY_SCREEN,
+        .callback = large_display_callback
+    });
+    add_home_button(shop, (Home_Button) {
+        .texture = ACCOUNT_SETTINGS_HOME_ICON,
+        .transition = ACCOUNT_SCREEN,
+        .callback = NULL
+    });
 }

@@ -60,16 +60,20 @@ int main(int argc, char* argv[]) {
         bool admin_shortcut = (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) && IsKeyPressed(KEY_A);
         if (admin_shortcut) {
             shop.admin.active = !shop.admin.active;
+            if (shop.admin.active) {
+                shop.paused = true;
+            }
         }
         
         // UPDATE
-        update_shop(&shop);
+        if (!shop.paused) {
+            update_shop(&shop);
+        }
 
         // DRAW
         BeginTextureMode(shop.render_target);
             draw_shop(&shop);
         EndTextureMode();
-
 		BeginDrawing();
             ClearBackground(BLACK);
             shop_render_pass(&shop);
@@ -127,12 +131,20 @@ void shop_render_pass(Shop* shop) {
 }
 
 void ui_render_pass(Shop* shop) {
+    if (shop->paused) {
+        DrawRectangle(0,0, GetScreenWidth(), GetScreenHeight(),
+            Fade(BLACK, 0.60)
+        );
+    }
+
     rlImGuiBegin();
 #ifdef PLATFORM_WEB
     web_clipboard_flush();
 #endif
     if (shop->admin.active) {
         admin_panel(&shop->admin);
+    } else {
+        shop->paused = false;
     }
     rlImGuiEnd();
 }
@@ -162,51 +174,44 @@ Vector2 mouse_pos_in_shop(Shop* shop) {
     };
 }
 
-void update_carousel(float* scroll, float* target, int count, float spacing) {
-    float wheel = GetMouseWheelMove();
-    *target -= wheel * spacing;
-    if (IsKeyPressed(KEY_RIGHT)) {
-        *target += spacing;
-    }
-    if (IsKeyPressed(KEY_LEFT)) {
-        *target -= spacing;
+void update_carousel(float* scroll, float* target, int count, float spacing, bool active) {
+    if (active) {
+        float wheel = GetMouseWheelMove();
+        *target -= wheel * spacing;
+        if (IsKeyPressed(KEY_RIGHT)) {
+            *target += spacing;
+        }
+        if (IsKeyPressed(KEY_LEFT)) {
+            *target -= spacing;
+        }
     }
     float max_scroll = fmaxf(0.0, (count-1) * spacing);
     *target = Clamp(*target, 0.0, max_scroll);
     *scroll = Lerp(*scroll, *target, 1.0 - powf(0.001, GetFrameTime()));
 }
 
-Item_List get_items_by_name(Shop* shop, const char** names, int name_count) {
+// NOTE!!
+// the sql must be some form of `"SELECT " ITEM_COLUMNS " FROM items "`
+// or else BAD THINGS WILL HAPPEN!!!
+Item_List query_items(Shop* shop, char* sql) {
     Item_List list = {0};
-    SQL_Result r = sql_run(
-        &shop->admin,
-        "SELECT id, name, description, price, stock "
-        "FROM items;"
-    );
-    if (r.error) {
-        printf("%s\n", r.error);
+    SQL_Result result = sql_run(&shop->admin, sql);
+    if (result.error) {
+        printf("%s\n", result.error);
         return list;
     }
 
-    for (int y=0; y<r.height; y++) {
-        if (names && name_count > 0) {
-            bool wanted = false;
-            for (int n=0; n<name_count; n++) {
-                if (strcmp(names[n], CELL(&r, 1, y)) == 0) {
-                    wanted = true;
-                    break;
-                }
-            }
-            if (!wanted) {
-                continue;
-            }
-        }
+    for (int y=0; y<result.height; y++) {
         Item item = {0};
-        item.id = atoi(CELL(&r, 0, y));
-        snprintf(item.name, sizeof(item.name), "%s", CELL(&r, 1, y));
-        snprintf(item.description, sizeof(item.description), "%s", CELL(&r, 2, y));
-        item.price = strtof(CELL(&r, 3, y), NULL);
-        item.stock = atoi(CELL(&r, 4, y));
+        item.id = atoi(CELL(&result, 0, y));
+        snprintf(item.name, sizeof(item.name), "%s", 
+            CELL(&result, ITEM_NAME_COLUMN, y)
+        );
+        snprintf(item.description, sizeof(item.description), "%s", 
+            CELL(&result, ITEM_DESC_COLUMN, y)
+        );
+        item.price = strtof(CELL(&result, ITEM_PRICE_COLUMN, y), NULL);
+        item.stock = atoi(CELL(&result, ITEM_STOCK_COLUMN, y));
         arena_da_append(&list.alloc, &list, item);
     }
     return list;
@@ -259,34 +264,29 @@ bool init_shop(Shop *shop) {
 
     // actual Shop setup
     shop->screen = LOAD_SCREEN;
-    // lower home menu buttons
-    add_home_button(shop, (Home_Button) {
-        .texture = CHAIRS_HOME_ICON,
-        .transition = DISPLAY_SCREEN,
-        .sql = NULL
-    });
-    add_home_button(shop, (Home_Button) {
-        .texture = OTHER_FURNISHINGS_HOME_ICON,
-        .transition = DISPLAY_SCREEN,
-        .sql = NULL
-    });
-    add_home_button(shop, (Home_Button) {
-        .texture = LARGER_ITEMS_HOME_ICON,
-        .transition = DISPLAY_SCREEN,
-        .sql = NULL
-    });
-    // featured items
-    const char* featured[] = {
-        "wooden_chair",
-        "caveman_chair",
-        "the_batmobile",
-        "lawn_chair",
-    };
-    shop->featured = get_items_by_name(
-        shop,
-        featured,
-        sizeof(featured) / sizeof(featured[0])
+    init_home_menu_buttons(shop);
+    // inline SQL is CRAZY
+    // it looks terrible, bust trust me, inline GCC assembly is far worse!
+    shop->featured = query_items(shop,
+        "SELECT " ITEM_COLUMNS " FROM items "
+        "WHERE name IN ("
+            "'wooden_chair', "
+            "'caveman_chair', "
+            "'the_batmobile', "
+            "'lawn_chair', "
+            "'refrigerator', "
+            "'kingly_throne'"
+        ") "
+        "ORDER BY CASE name "
+            "WHEN 'wooden_chair'   THEN 0 "
+            "WHEN 'caveman_chair' THEN 1 "
+            "WHEN 'the_batmobile' THEN 2 "
+            "WHEN 'lawn_chair'    THEN 3 "
+            "WHEN 'refrigerator'  THEN 4 "
+            "WHEN 'kingly_throne' THEN 5 "
+        "END;"
     );
+    shop->paused = false;
 
     return true;
 }

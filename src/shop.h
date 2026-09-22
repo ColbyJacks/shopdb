@@ -2,6 +2,9 @@
 #ifndef SHOP_ONCE
 #define SHOP_ONCE
 
+// C programming is so astronomically painful bro 
+typedef struct Shop Shop;
+
 #ifndef CSV_SQL
     // this is kinda just here for reference, `CSV_SQL` should be defined in `shop.c` before `#include "shop.h"` 
     typedef struct {
@@ -65,15 +68,17 @@ typedef enum {
     LOAD_SCREEN,
     HOME_SCREEN,
     DISPLAY_SCREEN,
-    // ACCOUNT_SCREEN,
-    // CHECKOUT_SCREEN,
-    // IDK??
+    ACCOUNT_SCREEN,
+    CART_SCREEN,
+    CHECKOUT_SCREEN,
 } Screen;
+
+typedef void (*Home_Button_Callback)(Shop *shop);
 
 typedef struct {
     Texture2D texture;
     Screen transition;
-    const char* sql;
+    Home_Button_Callback callback;
 } Home_Button;
 
 typedef struct {
@@ -104,6 +109,7 @@ typedef Ht(int, Item_Resource) Item_Resource_Table;
 typedef struct Shop {
     Admin_Panel admin;
     Item_Resource_Table item_resources;
+    bool paused;
 
     // HOME
     Home_Button* home_buttons;
@@ -134,12 +140,22 @@ void shop_render_pass(Shop* shop);
 void ui_render_pass(Shop* shop);
 void screen_swap(Shop* shop, Screen screen);
 Vector2 mouse_pos_in_shop(Shop* shop);
-void update_carousel(float* scroll, float* target, int count, float spacing);
-Item_List get_items_by_name(Shop* shop, const char** names, int name_count);
+void update_carousel(float* scroll, float* target, int count, float spacing, bool active);
+Item_List query_items(Shop* shop, char* sql);
 void reset_item_list(Item_List* list);
 
 bool init_shop(Shop *shop);
 void update_shop(Shop *shop);
 void draw_shop(Shop *shop);
+
+#define ITEM_ID_COLUMN       0
+#define ITEM_NAME_COLUMN     1
+#define ITEM_DESC_COLUMN     2
+#define ITEM_PRICE_COLUMN    3
+#define ITEM_STOCK_COLUMN    4
+#define ITEM_CATEGORY_COLUMN 5
+#define ITEM_DISPLAY_COLUMN  6
+
+#define ITEM_COLUMNS "id, name, description, price, stock, category, display"
 
 #endif
