@@ -87,6 +87,8 @@ typedef struct {
     char description[500];
     float price;
     int stock;
+    char category[100];
+    char display[100];
 } Item;
 
 typedef struct {
@@ -141,6 +143,7 @@ void ui_render_pass(Shop* shop);
 void screen_swap(Shop* shop, Screen screen);
 Vector2 mouse_pos_in_shop(Shop* shop);
 void update_carousel(float* scroll, float* target, int count, float spacing, bool active);
+void draw_carousel(Shop* shop, Item_List* items, float scroll, float spacing, float y);
 Item_List query_items(Shop* shop, char* sql);
 void reset_item_list(Item_List* list);
 

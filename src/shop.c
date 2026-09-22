@@ -38,6 +38,7 @@ int main(int argc, char* argv[]) {
 	SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
 	InitWindow(screen_width, screen_height, "shop");
 	SetTargetFPS(144);
+    SetExitKey(KEY_NULL);
     init_textures();
 	rlImGuiSetup(true);
 
@@ -190,6 +191,76 @@ void update_carousel(float* scroll, float* target, int count, float spacing, boo
     *scroll = Lerp(*scroll, *target, 1.0 - powf(0.001, GetFrameTime()));
 }
 
+void draw_carousel(Shop* shop, Item_List* items, float scroll, float spacing, float y) {
+    Camera3D camera = shop->camera;
+    camera.position.x = scroll;
+    camera.target.x = scroll;
+    camera.target.y = y;
+
+    BeginMode3D(camera);
+    for (size_t i = 0; i < items->count; i++) {
+        Item item = items->items[i];
+        Item_Resource* resource = get_item_resource(shop, item); 
+        if (!resource) {
+            continue;
+        }
+        float item_x = i * spacing;
+        float center_dist = fabsf(item_x - scroll);
+        float focus = 1.0f - Clamp(
+            center_dist / spacing,
+            0.0f, 1.0f
+        );
+        float focus_scale = Lerp(0.65f, 1.15f, focus);
+        Vector3 pos = {
+            item_x,
+            Lerp(-0.25f, 0.0f, focus),
+            Lerp(1.5f, 0.0f, focus)
+        };
+        if (resource->is_model) {
+            float spin = GetTime() * 25.0 + i * 47.0;
+            DrawModelEx(
+                resource->model,
+                pos,
+                (Vector3){ 0.2, 1.0, 0.2 },
+                spin,
+                (Vector3) {
+                    resource->scale * focus_scale,
+                    resource->scale * focus_scale,
+                    resource->scale * focus_scale
+                },
+                WHITE
+            );
+        } else {
+            Rectangle source = {
+                0.0f,0.0f,
+                (float)resource->texture.width,(float)resource->texture.height
+            };
+            float scale = resource->scale * focus_scale;
+            float size_y = ((float)resource->texture.height / (float)resource->texture.width);
+            Vector2 size = {
+                scale,
+                scale * size_y
+            };
+            Vector2 origin = {
+                size.x * 0.5f,0
+            };
+
+            DrawBillboardPro(
+                camera,
+                resource->texture,
+                source,
+                pos,
+                (Vector3){ 0.0, 1.0, 0.0},
+                size,
+                origin,
+                0.0,
+                WHITE
+            );
+        }
+    }
+    EndMode3D();
+}
+
 // NOTE!!
 // the sql must be some form of `"SELECT " ITEM_COLUMNS " FROM items "`
 // or else BAD THINGS WILL HAPPEN!!!
@@ -212,6 +283,13 @@ Item_List query_items(Shop* shop, char* sql) {
         );
         item.price = strtof(CELL(&result, ITEM_PRICE_COLUMN, y), NULL);
         item.stock = atoi(CELL(&result, ITEM_STOCK_COLUMN, y));
+        snprintf(item.category, sizeof(item.category), "%s", 
+            CELL(&result, ITEM_CATEGORY_COLUMN, y)
+        );
+        snprintf(item.display, sizeof(item.category), "%s", 
+            CELL(&result, ITEM_DISPLAY_COLUMN, y)
+        );
+
         arena_da_append(&list.alloc, &list, item);
     }
     return list;
@@ -256,8 +334,8 @@ bool init_shop(Shop *shop) {
     Vector2 resolution = {(float)target.texture.width, (float)target.texture.height};
     SetShaderValue(shop->shader, resolution_loc, &resolution, SHADER_UNIFORM_VEC2);
     shop->render_target = target;
-    shop->camera.position = (Vector3){ 0.0f, HOME_FEATURED_Y, 7.0f };
-    shop->camera.target   = (Vector3){ 0.0f, HOME_FEATURED_Y, 0.0f };
+    shop->camera.position = (Vector3){ 0.0f, 0.0, 7.0f };
+    shop->camera.target   = (Vector3){ 0.0f, 0.0, 0.0f };
     shop->camera.up       = (Vector3){ 0.0f, 1.0f, 0.0f };
     shop->camera.fovy     = 45.0f;
     shop->camera.projection = CAMERA_PERSPECTIVE;
@@ -366,7 +444,7 @@ void draw_shop(Shop *shop) {
             (Rectangle){bar_x, bar_y, bar_w * progress, bar_h},
             1.0, 5, SHOP_GREEN
         );
-        if (elapsed > 5.0) {
+        if (elapsed > 5.0 || IsKeyPressed(KEY_ESCAPE)) {
             screen_swap(shop, HOME_SCREEN);
         }
     }break;

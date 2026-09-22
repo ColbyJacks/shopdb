@@ -97,79 +97,15 @@ void draw_home_buttons(Shop* shop) {
     }
 }
 
-void draw_featured_items(Shop* shop) {
-    Camera3D camera = shop->camera;
-    camera.position.x = shop->top_row_scroll;
-    camera.target.x = shop->top_row_scroll;
-    camera.target.y = HOME_FEATURED_Y;
-
-    BeginMode3D(camera);
-    for (size_t i = 0; i < shop->featured.count; i++) {
-        Item item = shop->featured.items[i];
-        Item_Resource* resource = get_item_resource(shop, item); 
-        if (!resource) {
-            continue;
-        }
-        float item_x = i * HOME_FEATURED_SPACING;
-        float center_dist = fabsf(item_x - shop->top_row_scroll);
-        float focus = 1.0f - Clamp(
-            center_dist / HOME_FEATURED_SPACING,
-            0.0f, 1.0f
-        );
-        float focus_scale = Lerp(0.65f, 1.15f, focus);
-        Vector3 pos = {
-            item_x,
-            Lerp(-0.25f, 0.0f, focus),
-            Lerp(1.5f, 0.0f, focus)
-        };
-        if (resource->is_model) {
-            float spin = GetTime() * 25.0 + i * 47.0;
-            DrawModelEx(
-                resource->model,
-                pos,
-                (Vector3){ 0.2, 1.0, 0.2 },
-                spin,
-                (Vector3) {
-                    resource->scale * focus_scale,
-                    resource->scale * focus_scale,
-                    resource->scale * focus_scale
-                },
-                WHITE
-            );
-        } else {
-            Rectangle source = {
-                0.0f,0.0f,
-                (float)resource->texture.width,(float)resource->texture.height
-            };
-            float scale = resource->scale * focus_scale;
-            float size_y = ((float)resource->texture.height / (float)resource->texture.width);
-            Vector2 size = {
-                scale,
-                scale * size_y
-            };
-            Vector2 origin = {
-                size.x * 0.5f,0
-            };
-
-            DrawBillboardPro(
-                camera,
-                resource->texture,
-                source,
-                pos,
-                (Vector3){ 0.0, 1.0, 0.0},
-                size,
-                origin,
-                0.0,
-                WHITE
-            );
-        }
-    }
-    EndMode3D();
-}
-
 void draw_home(Shop* shop) {
     // top row
-    draw_featured_items(shop);
+    draw_carousel(
+        shop, 
+        &shop->featured, 
+        shop->top_row_scroll, 
+        HOME_FEATURED_SPACING,
+        HOME_FEATURED_Y
+    );
     // bottom row
     draw_home_buttons(shop);
 }
